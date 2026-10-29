@@ -1,0 +1,145 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..a0bd2d4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -78,6 +78,8 @@ OBJCOPY = $(TOOLPREFIX)objcopy
+ OBJDUMP = $(TOOLPREFIX)objdump
+ CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
+ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
++CFLAGS += -Wno-error=infinite-recursion
++CFLAGS += -Wno-error=array-bounds
+ ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
+ # FreeBSD ld wants ``elf_i386_fbsd''
+ LDFLAGS += -m $(shell $(LD) -V | grep elf_i386 2>/dev/null | head -n 1)
+@@ -181,6 +183,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++        _getprocs\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 82fb982..88b6303 100644
+--- a/defs.h
++++ b/defs.h
+@@ -120,7 +120,7 @@ void            userinit(void);
+ int             wait(void);
+ void            wakeup(void*);
+ void            yield(void);
+-
++int             getprocs(void);
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+ 
+diff --git a/getprocs.c b/getprocs.c
+new file mode 100644
+index 0000000..2132aa1
+--- /dev/null
++++ b/getprocs.c
+@@ -0,0 +1,11 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++int
++main(void)
++{
++  printf(1, "Processing running: %d/n", getprocs());
++  exit();
++}
++
+diff --git a/proc.c b/proc.c
+index 806b1b1..3893419 100644
+--- a/proc.c
++++ b/proc.c
+@@ -532,3 +532,24 @@ procdump(void)
+     cprintf("\n");
+   }
+ }
++
++int
++getprocs(void)
++{
++  int count = 0;
++  struct proc *p;
++
++  acquire(&ptable.lock);
++
++  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
++    if(p->state == RUNNABLE || p->state == RUNNABLE){
++      count++;
++    }
++  }
++
++  release(&ptable.lock);
++
++  return count;
++
++}
++
+diff --git a/syscall.c b/syscall.c
+index ee85261..539bb70 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_getprocs(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +127,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_getprocs] sys_getprocs,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..85fb6f3 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,5 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_getprocs 22
++
+diff --git a/sysproc.c b/sysproc.c
+index 0686d29..70bfd17 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -89,3 +89,9 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++int
++sys_getprocs(void)
++{
++  return getprocs();
++}
+diff --git a/user.h b/user.h
+index 4f99c52..77e7637 100644
+--- a/user.h
++++ b/user.h
+@@ -20,6 +20,7 @@ int mkdir(const char*);
+ int chdir(const char*);
+ int dup(int);
+ int getpid(void);
++int getprocs(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..f89931d 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(getprocs)
